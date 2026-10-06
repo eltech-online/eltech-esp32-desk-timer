@@ -82,7 +82,7 @@ There are **two sketches** in this repo:
 | KY-040 rotary encoder module | 5 pins: `CLK`, `DT`, `SW`, `+`, `GND` |
 | Active buzzer module ("Low level trigger") | 3 pins: `GND`, `I/O`, `VCC` |
 | Vibration motor module | 3 pins: `IN`, `VCC`, `GND`. Note the unusual order |
-| Breadboard + jumper wires | 15 wires |
+| Breadboard + jumper wires | 16 wires |
 
 ## Wiring
 
