@@ -60,6 +60,10 @@ const bool MOTOR_ACTIVE_LOW  = false;
 
 // Turning the knob the "wrong" way round? Change false to true.
 const bool ENC_REVERSE = false;
+// Some knobs give one click per two moves of their switches, others one click
+// per four. Only every second click counts? Use true. Each click counts twice?
+// Use false.
+const bool ENC_TWO_MOVE_CLICKS = true;
 
 // ---- Times ----
 const int POMODORO_WORK_MINUTES  = 25;   // the Pomodoro method: 25 minutes of work...
@@ -97,21 +101,48 @@ void chirp() {
 // Knob
 // ---------------------------------------------------------------------------
 // Inside the knob are two switches, CLK and DT, that open and close one after
-// the other as it turns. When CLK falls, DT is still high for one direction and
-// already low for the other. A click is over in a few milliseconds, so CLK is
-// watched by an INTERRUPT: the board drops whatever it is doing, runs
-// knobTurned(), and carries on. "volatile" tells the compiler the value can
-// change at any moment.
+// the other as it turns. A full cycle takes both wires through four small
+// moves and back to where they started (both HIGH):
+//
+//   one way:    CLK falls, DT falls, CLK rises, DT rises
+//   other way:  DT falls, CLK falls, DT rises, CLK rises
+//
+// Real switches BOUNCE: for a millisecond the contact chatters, so one move
+// looks like several, forwards and backwards. Watching only CLK and peeking
+// at DT gets fooled by that, most of all on a slow turn (the count steps up,
+// down, up...). So the sketch follows every move of BOTH wires and adds +1 or
+// -1 for each. A bounce is one move forward and one back, which adds up to
+// nothing. Only a whole click, every move of it the same way, counts as a
+// step. A click is two moves on some knobs (they rest with both wires HIGH and
+// again with both LOW) and all four on others: see ENC_TWO_MOVE_CLICKS.
+//
+// Both wires are watched by an INTERRUPT: the board drops whatever it is
+// doing, runs knobTurned(), and carries on, so no click is missed.
+// "volatile" tells the compiler the value can change at any moment.
+// (IRAM_ATTR keeps the function in fast memory, which interrupts need.)
 volatile int knobSteps = 0;
-volatile unsigned long lastKnobUs = 0;
+
+// What each move is worth. The row is picked by the old and new readings of the
+// two wires put together as one number: old CLK, old DT, new CLK, new DT.
+// 0 = nothing changed, or a move that can't really happen (noise).
+const int8_t KNOB_MOVES[16] = { 0, -1, 1, 0,  1, 0, 0, -1,  -1, 0, 0, 1,  0, 1, -1, 0 };
 
 void IRAM_ATTR knobTurned() {
-  unsigned long now = micros();
-  if (now - lastKnobUs < 1500) return;      // ignore contact bounce
-  lastKnobUs = now;
-  bool clockwise = digitalRead(ENC_DT) == HIGH;
-  if (ENC_REVERSE) clockwise = !clockwise;
-  knobSteps += clockwise ? 1 : -1;
+  static uint8_t last = 3;                  // both wires HIGH = knob at rest
+  static int8_t moves = 0;                  // moves since the last rest
+  const int8_t need = ENC_TWO_MOVE_CLICKS ? 2 : 3;
+  uint8_t now = (digitalRead(ENC_CLK) << 1) | digitalRead(ENC_DT);
+  moves += KNOB_MOVES[(last << 2) | now];
+  last = now;
+  bool atRest = now == 3 || (ENC_TWO_MOVE_CLICKS && now == 0);
+  if (atRest) {                             // at rest: was it a whole click?
+    int step = 0;
+    if (moves >= need) step = 1;
+    if (moves <= -need) step = -1;
+    if (ENC_REVERSE) step = -step;
+    knobSteps += step;
+    moves = 0;
+  }
 }
 
 // What the knob did since last time: how many clicks it turned (+ or -), and
@@ -401,7 +432,8 @@ void setup() {
   pinMode(ENC_CLK, INPUT_PULLUP);
   pinMode(ENC_DT, INPUT_PULLUP);
   pinMode(ENC_SW, INPUT_PULLUP);   // the button has no pull-up of its own
-  attachInterrupt(digitalPinToInterrupt(ENC_CLK), knobTurned, FALLING);
+  attachInterrupt(digitalPinToInterrupt(ENC_CLK), knobTurned, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(ENC_DT), knobTurned, CHANGE);
 
   Wire.begin(I2C_SDA, I2C_SCL);
   bool oledOK = display.begin(OLED_ADDR, true);
